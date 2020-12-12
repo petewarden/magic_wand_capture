@@ -47,8 +47,6 @@ void setup() {
   static tflite::MicroErrorReporter micro_error_reporter;  // NOLINT
   error_reporter = &micro_error_reporter;
 
-  return;
-
   // Map the model into a usable data structure. This doesn't involve any
   // copying or parsing, it's a very lightweight operation.
   model = tflite::GetModel(g_magic_wand_model_data);
@@ -69,8 +67,7 @@ void setup() {
   micro_op_resolver.AddConv2D();
   micro_op_resolver.AddDepthwiseConv2D();
   micro_op_resolver.AddFullyConnected();
-  micro_op_resolver.AddBuiltin(tflite::BuiltinOperator_MAX_POOL_2D,
-    tflite::ops::micro::Register_MAX_POOL_2D());
+  micro_op_resolver.AddMaxPool2D();
   micro_op_resolver.AddSoftmax();
 
   // Build an interpreter to run the model with.
@@ -194,7 +191,7 @@ void RecognizeGestures() {
       TF_LITE_REPORT_ERROR(error_reporter, "Logic error - unknown state");
     } break;
   }
-
+  
   // Increment the timing counter.
   ++counter;
 }
@@ -296,12 +293,10 @@ void CaptureGestureData() {
 }
 
 void loop() {
-  TF_LITE_REPORT_ERROR(error_reporter, "loop()");
-  return;
-
   // Attempt to read new data from the accelerometer.
   bool got_data =
       ReadAccelerometer(error_reporter, model_input->data.f, input_length);
+
   // If there was no new data, wait until next time.
   if (!got_data) return;
 
@@ -310,7 +305,7 @@ void loop() {
   // targeting don't have any built-in input devices you'll need to manually
   // switch between recognizing gestures and capturing training data by changing
   // this variable and recompiling.
-  const bool should_capture_data = true;
+  const bool should_capture_data = false;
   if (should_capture_data) {
     CaptureGestureData();
   } else {

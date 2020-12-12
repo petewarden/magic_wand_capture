@@ -28,19 +28,14 @@ void HandleOutput(tflite::ErrorReporter* error_reporter, int kind) {
   // Print some ASCII art for each gesture and control the LED.
   if (kind == 0) {
     error_reporter->Report(
-        "WING:\n\r*         *         *\n\r *       * *       "
-        "*\n\r  *     *   *     *\n\r   *   *     *   *\n\r    * *       "
-        "* *\n\r     *         *\n\r");
+        "WING");
   } else if (kind == 1) {
     digitalWrite(LED_BUILTIN, HIGH);
     error_reporter->Report(
-        "RING:\n\r          *\n\r       *     *\n\r     *         *\n\r "
-        "   *           *\n\r     *         *\n\r       *     *\n\r      "
-        "    *\n\r");
+        "RING");
   } else if (kind == 2) {
     digitalWrite(LED_BUILTIN, LOW);
     error_reporter->Report(
-        "SLOPE:\n\r        *\n\r       *\n\r      *\n\r     *\n\r    "
-        "*\n\r   *\n\r  *\n\r * * * * * * * *\n\r");
+        "SLOPE");
   }
 }
