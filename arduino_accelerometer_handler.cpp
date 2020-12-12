@@ -52,13 +52,7 @@ TfLiteStatus SetupAccelerometer(tflite::ErrorReporter* error_reporter) {
 }
 
 bool ReadAccelerometer(tflite::ErrorReporter* error_reporter, float* input,
-                       int length, bool reset_buffer) {
-  // Clear the buffer if required, e.g. after a successful prediction
-  if (reset_buffer) {
-    memset(save_data, 0, 600 * sizeof(float));
-    begin_index = 0;
-    pending_initial_data = true;
-  }
+                       int length) {
   // Keep track of whether we stored any new data
   bool new_data = false;
   // Loop through new samples and add to buffer
