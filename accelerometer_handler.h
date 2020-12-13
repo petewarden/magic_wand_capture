@@ -16,11 +16,10 @@ limitations under the License.
 #ifndef TENSORFLOW_LITE_MICRO_EXAMPLES_MAGIC_WAND_ACCELEROMETER_HANDLER_H_
 #define TENSORFLOW_LITE_MICRO_EXAMPLES_MAGIC_WAND_ACCELEROMETER_HANDLER_H_
 
-#define kChannelNumber 3
-
 #include <TensorFlowLite.h>
 
 #include "tensorflow/lite/c/common.h"
+#include "constants.h"
 #include "tensorflow/lite/micro/micro_error_reporter.h"
 
 extern int begin_index;

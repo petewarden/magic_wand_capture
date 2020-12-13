@@ -30,14 +30,5 @@ int PredictGesture(const float* prediction_scores) {
       max_prediction_index = i;
     }
   }
-
-  int found_gesture;
-  if ((max_prediction_index == kNoGesture) ||
-      (max_prediction_score < kDetectionThreshold)) {
-    found_gesture = kNoGesture;
-  } else {
-    found_gesture = max_prediction_index;
-  }
-
-  return found_gesture;
+  return max_prediction_index;
 }

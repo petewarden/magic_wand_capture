@@ -30,14 +30,16 @@ namespace {
 tflite::ErrorReporter* error_reporter = nullptr;
 const tflite::Model* model = nullptr;
 tflite::MicroInterpreter* interpreter = nullptr;
-TfLiteTensor* model_input = nullptr;
-int input_length;
 
 // Create an area of memory to use for input, output, and intermediate arrays.
 // The size of this will depend on the model you're using, and may need to be
 // determined by experimentation.
-constexpr int kTensorArenaSize = 120 * 1024;
+constexpr int kTensorArenaSize = 60 * 1024;
 uint8_t tensor_arena[kTensorArenaSize];
+
+// Buffer to hold the input accelerometer samples before they're normalized
+// for gravity.
+float input_sample_buffer[kInputElementCount];
 }  // namespace
 
 // The name of this function is important for Arduino compatibility.
@@ -47,6 +49,10 @@ void setup() {
   static tflite::MicroErrorReporter micro_error_reporter;  // NOLINT
   error_reporter = &micro_error_reporter;
 
+  while (!Serial) {
+    ; // wait for serial port to connect. Needed for native USB
+  }
+  
   // Map the model into a usable data structure. This doesn't involve any
   // copying or parsing, it's a very lightweight operation.
   model = tflite::GetModel(g_magic_wand_model_data);
@@ -63,11 +69,12 @@ void setup() {
   // An easier approach is to just use the AllOpsResolver, but this will
   // incur some penalty in code space for op implementations that are not
   // needed by this graph.
-  static tflite::MicroMutableOpResolver<5> micro_op_resolver;  // NOLINT
+  static tflite::MicroMutableOpResolver<6> micro_op_resolver;  // NOLINT
   micro_op_resolver.AddConv2D();
   micro_op_resolver.AddDepthwiseConv2D();
   micro_op_resolver.AddFullyConnected();
   micro_op_resolver.AddMaxPool2D();
+  micro_op_resolver.AddReshape();
   micro_op_resolver.AddSoftmax();
 
   // Build an interpreter to run the model with.
@@ -79,17 +86,16 @@ void setup() {
   interpreter->AllocateTensors();
 
   // Obtain pointer to the model's input tensor.
-  model_input = interpreter->input(0);
-  if ((model_input->dims->size != 4) || (model_input->dims->data[0] != 1) ||
-      (model_input->dims->data[1] != 128) ||
-      (model_input->dims->data[2] != kChannelNumber) ||
-      (model_input->type != kTfLiteFloat32)) {
+  TfLiteTensor* model_input = interpreter->input(0);
+  if ((model_input->dims->size != 4) || (model_input->dims->data[0] != kInputBatchCount) ||
+      (model_input->dims->data[1] != kInputSampleCount) ||
+      (model_input->dims->data[2] != kInputChannelCount) ||
+      (model_input->type != kTfLiteFloat32) ||
+      (model_input->bytes != kInputByteCount)) {
     TF_LITE_REPORT_ERROR(error_reporter,
                          "Bad input tensor parameters in model");
     return;
   }
-
-  input_length = model_input->bytes / sizeof(float);
 
   TfLiteStatus setup_status = SetupAccelerometer(error_reporter);
   if (setup_status != kTfLiteOk) {
@@ -99,10 +105,10 @@ void setup() {
 
 bool IsMoving() {
   // Look at the most recent accelerometer values.
-  const float* input_data = model_input->data.f;
-  const float last_x = input_data[input_length - 3];
-  const float last_y = input_data[input_length - 2];
-  const float last_z = input_data[input_length - 1];
+  const float* input_data = input_sample_buffer;
+  const float last_x = input_data[kInputElementCount - 3];
+  const float last_y = input_data[kInputElementCount - 2];
+  const float last_z = input_data[kInputElementCount - 1];
 
   // Figure out the total amount of acceleration being felt by the device.
   const float last_x_squared = last_x * last_x;
@@ -122,6 +128,65 @@ bool IsMoving() {
   const bool is_moving = (movement > movement_threshold);
 
   return is_moving;
+}
+
+float VectorMagnitude(const float* vec) {
+  const float x = vec[0];
+  const float y = vec[1];
+  const float z = vec[2];
+  return sqrtf((x * x) + (y * y) + (z * z));
+}
+
+void NormalizeVector(const float* in_vec, float* out_vec) {
+  const float magnitude = VectorMagnitude(in_vec);
+  const float x = in_vec[0];
+  const float y = in_vec[1];
+  const float z = in_vec[2];
+  out_vec[0] = x / magnitude;
+  out_vec[1] = y / magnitude;
+  out_vec[2] = z / magnitude;
+}
+
+float DotProduct(const float* a, const float* b) {
+  return (a[0] * b[0], a[1] * b[1], a[2] * b[2]);
+}
+
+void EstimateGravityDirection(const float* sequence, int sequence_length, float* gravity) {
+  float x_total = 0.0f;
+  float y_total = 0.0f;
+  float z_total = 0.0f;
+  for (int i = 0; i < sequence_length; ++i) {
+    const int sequence_index = (i * 3);
+    const float* entry = &sequence[sequence_index];
+    const float x = entry[0];
+    const float y = entry[1];
+    const float z = entry[2];
+    x_total += x;
+    y_total += y;
+    z_total += z;
+  }
+  gravity[0] = x_total / sequence_length;
+  gravity[1] = y_total / sequence_length;
+  gravity[2] = z_total / sequence_length;
+}
+
+void RemoveGravityFromAccelerationData(const float* in_sequence, int sequence_length, float* out_sequence) {
+  float gravity_direction[3];
+  EstimateGravityDirection(in_sequence, sequence_length, gravity_direction);
+  const float gravity_x = gravity_direction[0];
+  const float gravity_y = gravity_direction[1];
+  const float gravity_z = gravity_direction[2];
+  for (int i = 0; i < sequence_length; ++i) {
+    const int sequence_index = (i * 3);
+    const float* in_entry = &in_sequence[sequence_index];
+    const float x = in_entry[0];
+    const float y = in_entry[1];
+    const float z = in_entry[2];
+    float* out_entry = &out_sequence[sequence_index];
+    out_entry[0] = x - gravity_x;
+    out_entry[1] = y - gravity_y;
+    out_entry[2] = z - gravity_z;
+  }
 }
 
 // This is the regular function we run to recognize gestures from a pretrained
@@ -169,6 +234,10 @@ void RecognizeGestures() {
     case eRecordingGesture: {
       const int recording_time = 128;
       if ((counter - gesture_start_time) > recording_time) {
+        // Copy normalized data into the model's input buffer.
+        float* model_input_buffer = interpreter->input(0)->data.f;
+        RemoveGravityFromAccelerationData(input_sample_buffer, kInputSampleCount, model_input_buffer);
+        
         // Run inference, and report any error.
         TfLiteStatus invoke_status = interpreter->Invoke();
         if (invoke_status != kTfLiteOk) {
@@ -178,6 +247,11 @@ void RecognizeGestures() {
         }
 
         const float* prediction_scores = interpreter->output(0)->data.f;
+        TF_LITE_REPORT_ERROR(error_reporter, "Prediction: %d, %d, %d, %d",
+                             (int)(prediction_scores[0] * 1000), 
+                             (int)(prediction_scores[1] * 1000), 
+                             (int)(prediction_scores[2] * 1000), 
+                             (int)(prediction_scores[3] * 1000));
         const int found_gesture = PredictGesture(prediction_scores);
 
         // Produce an output
@@ -268,9 +342,9 @@ void CaptureGestureData() {
         ++gesture_count;
         TF_LITE_REPORT_ERROR(error_reporter, "****************");
         TF_LITE_REPORT_ERROR(error_reporter, "gesture: %s", next_gesture);
-        const float* input_data = model_input->data.f;
+        const float* input_data = input_sample_buffer;
         for (int offset = recording_time - 10; offset > 0; --offset) {
-          const int array_offset = (input_length - (offset * 3));
+          const int array_offset = (kInputElementCount - (offset * 3));
           const int x = static_cast<int>(input_data[array_offset + 0]);
           const int y = static_cast<int>(input_data[array_offset + 1]);
           const int z = static_cast<int>(input_data[array_offset + 2]);
@@ -295,7 +369,7 @@ void CaptureGestureData() {
 void loop() {
   // Attempt to read new data from the accelerometer.
   bool got_data =
-      ReadAccelerometer(error_reporter, model_input->data.f, input_length);
+      ReadAccelerometer(error_reporter, input_sample_buffer, kInputElementCount);
 
   // If there was no new data, wait until next time.
   if (!got_data) return;
